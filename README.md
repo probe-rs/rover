@@ -1,18 +1,22 @@
 # TODO:
 - erase command
+- RTT
+- ITM
+- GDB
+- Backtrace
+- verify command
 
+# rover
 
-# cargo-flash
-
-[![crates.io](https://meritbadge.herokuapp.com/cargo-flash)](https://crates.io/crates/cargo-flash) [![documentation](https://docs.rs/cargo-flash/badge.svg)](https://docs.rs/cargo-flash) [![Actions Status](https://github.com/probe-rs/cargo-flash/workflows/CI/badge.svg)](https://github.com/probe-rs/cargo-flash/actions) [![chat](https://img.shields.io/badge/chat-probe--rs%3Amatrix.org-brightgreen)](https://matrix.to/#/!vhKMWjizPZBgKeknOo:matrix.org)
+[![crates.io](https://meritbadge.herokuapp.com/rover)](https://crates.io/crates/rover) [![documentation](https://docs.rs/rover/badge.svg)](https://docs.rs/rover) [![Actions Status](https://github.com/probe-rs/rover/workflows/CI/badge.svg)](https://github.com/probe-rs/rover/actions) [![chat](https://img.shields.io/badge/chat-probe--rs%3Amatrix.org-brightgreen)](https://matrix.to/#/!vhKMWjizPZBgKeknOo:matrix.org)
 
 This crate provides a cargo subcommand to flash ELF binaries onto ARM chips.
 
-Various chip families including but not limited to **nRF5x**, **STM32** and **LPC800** can be flashed using **DAPLink**, **ST-Link** or **J-Link**. To check if your specific chip is supported, use `cargo flash --list-chips`
+Various chip families including but not limited to **nRF5x**, **STM32** and **LPC800** can be flashed using **DAPLink**, **ST-Link** or **J-Link**. To check if your specific chip is supported, use `rover --list-chips`
 
 ## Support
 
-If you think cargo-flash makes your embedded journey more enjoyable or even earns you money, please consider supporting the project on [Github Sponsors](https://github.com/sponsors/probe-rs/) for better support and more features.
+If you think rover makes your embedded journey more enjoyable or even earns you money, please consider supporting the project on [Github Sponsors](https://github.com/sponsors/probe-rs/) for better support and more features.
 
 ## Installation
 
@@ -20,7 +24,7 @@ You can install this utility with cargo, after installing the
 necessary [prerequisites](#prerequisites):
 
 ```bash
-cargo install cargo-flash
+cargo install rover
 ```
 
 Binary releases are not available.
@@ -30,7 +34,7 @@ Binary releases are not available.
 You can use it like any cargo command would be used
 
 ```bash
-cargo flash <args>
+rover <args>
 ```
 
 which will then build your binary and download the contents onto the connected target.
@@ -40,28 +44,28 @@ which will then build your binary and download the contents onto the connected t
 #### Flash the debug version of the current crate
 
 ```bash
-cargo flash --chip nrf58122
+rover --general.chip nrf58122
 ```
 
 #### Specifying manually what options should be used
 
 ```bash
-cargo flash --release --chip nRF51822 --target thumbv6m-none-eabi --example gpio_hal_blinky
+rover --release --general.chip nRF51822 --target thumbv6m-none-eabi --example gpio_hal_blinky
 ```
 
 #### Use a custom chip definition from a non-builtin file
 
 ```bash
-cargo flash --release --chip-description-path nRF51822.yaml --target thumbv6m-none-eabi --example gpio_hal_blinky
+rover --release --general.chip-descriptions nRF51822.yaml --target thumbv6m-none-eabi --example gpio_hal_blinky
 ```
 
 ### Manually selecting a chip
 
-To manually select a chip, you can use the `--chip <chip name>` argument. The chip name is an identifier such as `nRF51822` or `STM32F042`. Capitalization does not matter; Special characters do matter.
+To manually select a chip, you can use the `--general.chip <chip name>` argument. The chip name is an identifier such as `nRF51822` or `STM32F042`. Capitalization does not matter; Special characters do matter.
 
 ### Specifying a chip family description file
 
-You can add a temporary chip family description by using the `--chip-description-path <chip description file path>` or `-c` argument. You need to pass it the path to a valid yaml family description.
+You can add a temporary chip family description by using the `--general.chip-descriptions <chip description file paths>` argument. You need to pass it the path to a valid yaml family description.
 All the targets of the family will then be added to the registry temporarily and will override existing variants with the same name.
 You can use this feature to tinker with a chip family description until it works and then submit it to upstream for inclusion.
 
@@ -77,7 +81,7 @@ If you have a chip you want to flash, feel free to contribute to [probe-rs](http
 
 ## Building
 
-`cargo-flash` can be built using cargo, after installing the necessary prerequisites. See the list below for your operating
+`rover` can be built using cargo, after installing the necessary prerequisites. See the list below for your operating
 system.
 
 ### FTDI support
@@ -86,7 +90,7 @@ FTDI support is optional. You can enable it with the `ftdi` feature. You also ne
 
 ### Prerequisites
 
-cargo-flash depends on the [libusb](https://libusb.info/) and optionally on [libftdi](https://www.intra2net.com/en/developer/libftdi/) libraries, which need to be installed to build cargo-flash.
+rover depends on the [libusb](https://libusb.info/) and optionally on [libftdi](https://www.intra2net.com/en/developer/libftdi/) libraries, which need to be installed to build rover.
 
 #### Linux
 
@@ -116,11 +120,3 @@ On macOS, [homebrew](https://brew.sh/) is the suggested method to install libftd
 ```
 > brew install libftdi
 ```
-
-# Sentry logging
-
-We use Sentry to record crash data. This helps us trace crashes better.
-No data will ever be transmitted without your consent!
-All data is transmitted completely anonymously.
-This is an OPT-IN feature. On crash, cargo-flash will ask you whether to transmit the data or not. You can also set whether to do this for all times with an environment variable to omit the message in the future.
-If you do not wish to have sentry integrated at all, you can also build cargo-flash without sentry by using `--no-default-features`.# rover

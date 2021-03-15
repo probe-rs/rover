@@ -1,0 +1,38 @@
+[package]
+name = "cargo-flash"
+version = "0.10.2"
+authors = ["Noah Hüsser <yatekii@yatekii.ch>", "Dominik Boehi <dominik.boehi@gmail.com>"]
+edition = "2018"
+description = "A utility to flash ARM cores with ELFs directly from within cargo."
+documentation = "https://docs.rs/cargo-flash/"
+homepage = "https://github.com/probe-rs/cargo-flash"
+repository = "https://github.com/probe-rs/cargo-flash"
+readme = "README.md"
+categories = ["embedded", "hardware-support", "development-tools::debugging"]
+keywords = ["embedded"]
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+ftdi = ["probe-rs/ftdi"]
+sentry = ["probe-rs-cli-util/sentry"]
+
+[dependencies]
+structopt = "0.3.20"
+indicatif = "0.15.0"
+env_logger = "0.8.1"
+log = { version = "0.4.14", features = ["serde"] }
+lazy_static = "1.4.0"
+colored = "2.0.0"
+probe-rs = { version = "0.10.0", git = "https://github.com/probe-rs/probe-rs" }
+probe-rs-cli-util = { version = "0.10.0", git = "https://github.com/probe-rs/probe-rs", default-features = false, features=["anyhow"] }
+git-version = "0.3.4"
+anyhow = "1.0.34"
+bytesize = "1.0.1"
+thiserror = "1.0.23"
+dunce = "1.0.1"
+serde = "1.0.123"
+serde_json = "1.0.62"
+serde_yaml = "0.8.17"
+config = "0.10.1"
+ron = "0.6.4"
