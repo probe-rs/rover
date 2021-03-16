@@ -190,6 +190,7 @@ dependencies = [
  "serde_yaml",
  "structopt",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

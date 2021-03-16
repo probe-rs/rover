@@ -9,11 +9,89 @@ use probe_rs::{
     config::MemoryRegion,
     config::{RegistryError, TargetDescriptionSource},
     flashing::{FileDownloadError, FlashError},
-    Error as ProbeRsError, Target,
+    DebugProbeError, DebugProbeInfo, Error as ProbeRsError, Target, WireProtocol,
 };
 use probe_rs_cli_util::ArtifactError;
 
-use crate::CargoFlashError;
+#[derive(Debug, thiserror::Error)]
+pub enum CargoFlashError {
+    #[error("No connected probes were found.")]
+    NoProbesFound,
+    #[error("Failed to list the target descriptions.")]
+    FailedToReadFamilies(#[source] RegistryError),
+    #[error("Failed to open the ELF file '{path}' for flashing.")]
+    FailedToOpenElf {
+        #[source]
+        source: std::io::Error,
+        path: String,
+    },
+    #[error("Failed to load the ELF data.")]
+    FailedToLoadElfData(#[source] FileDownloadError),
+    #[error("Failed to open the debug probe.")]
+    FailedToOpenProbe(#[source] DebugProbeError),
+    #[error("The given probe credentials could not be parsed.")]
+    FailedToParseCredentials,
+    #[error("{} probes were found.", .list.len())]
+    MultipleProbesFound { list: Vec<DebugProbeInfo> },
+    #[error("The flashing procedure failed for '{path}'.")]
+    FlashingFailed {
+        #[source]
+        source: FlashError,
+        target: Target,
+        target_spec: Option<String>,
+        path: String,
+    },
+    #[error("Failed to parse the chip description '{path}'.")]
+    FailedChipDescriptionParsing {
+        #[source]
+        source: RegistryError,
+        path: String,
+    },
+    #[error("Failed to change the working directory to '{path}'.")]
+    FailedToChangeWorkingDirectory {
+        #[source]
+        source: std::io::Error,
+        path: String,
+    },
+    #[error("Failed to build the cargo project at '{path}'.")]
+    FailedToBuildExternalCargoProject {
+        #[source]
+        source: ArtifactError,
+        path: String,
+    },
+    #[error("Failed to build the cargo project.")]
+    FailedToBuildCargoProject(#[source] ArtifactError),
+    #[error("The chip '{name}' was not found in the database.")]
+    ChipNotFound {
+        #[source]
+        source: RegistryError,
+        name: String,
+    },
+    #[error("The protocol '{protocol}' could not be selected.")]
+    FailedToSelectProtocol {
+        #[source]
+        source: DebugProbeError,
+        protocol: WireProtocol,
+    },
+    #[error("The protocol speed coudl not be set to '{speed}' kHz.")]
+    FailedToSelectProtocolSpeed {
+        #[source]
+        source: DebugProbeError,
+        speed: u32,
+    },
+    #[error("Connecting to the chip was unsuccessful.")]
+    AttachingFailed {
+        #[source]
+        source: probe_rs::Error,
+        connect_under_reset: bool,
+    },
+    #[error("Failed to get a handle to the first core.")]
+    AttachingToCoreFailed(#[source] probe_rs::Error),
+    #[error("The reset of the target failed.")]
+    TargetResetFailed(#[source] probe_rs::Error),
+    #[error("The target could not be reset and halted.")]
+    TargetResetHaltFailed(#[source] probe_rs::Error),
+}
 
 pub(crate) fn render_diagnostics(error: CargoFlashError) {
     let (selected_error, hints) = match &error {

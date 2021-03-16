@@ -222,7 +222,7 @@ pub struct General {
     chip: Option<String>,
     #[structopt(long = "general.chip-descriptions")]
     chip_descriptions: Vec<String>,
-    #[structopt(long = "general.log-level")]
+    #[structopt(long = "general.log-level", default_value = "WARN")]
     log_level: log::Level,
     #[structopt(long = "general.derives")]
     derives: Option<String>,
