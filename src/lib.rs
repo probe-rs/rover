@@ -1,16 +1,20 @@
 mod config;
 mod diagnostics;
 mod flashing;
+mod gdb;
+mod logging;
+mod updater;
 mod util;
 
 use crate::config::Config;
 use anyhow::Result;
 use colored::*;
-use diagnostics::{render_diagnostics, CargoFlashError};
+use diagnostics::{render_diagnostics, RoverError};
+use logging::run_logging;
 use std::{
     fs::File,
     path::{Path, PathBuf},
-    process,
+    process::{self},
     sync::Arc,
     time::Instant,
 };
@@ -24,7 +28,9 @@ use probe_rs::{
     DebugProbeSelector, FakeProbe, Probe,
 };
 
-use probe_rs_cli_util::{argument_handling, build_artifact, logging, logging::Metadata};
+use probe_rs_cli_util::{
+    argument_handling, build_artifact, logging as probe_rs_logging, logging::Metadata,
+};
 
 lazy_static::lazy_static! {
     static ref METADATA: Arc<Mutex<Metadata>> = Arc::new(Mutex::new(Metadata {
@@ -77,7 +83,7 @@ pub fn entry(uses_cargo: bool) {
     }
 }
 
-fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
+fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
     let args = std::env::args();
 
     // Make sure to collect all the args into a vector so we can manipulate it
@@ -99,7 +105,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
         return Ok(());
     }
 
-    logging::init(Some(opt.general().log_level()));
+    probe_rs_logging::init(Some(opt.general().log_level()));
 
     // If someone wants to list the connected probes, just do that and exit.
     if opt.list_probes() {
@@ -110,7 +116,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     // Load the target description given in the cli parameters.
     for cdp in opt.general().chip_descriptions() {
         probe_rs::config::add_target_from_yaml(&Path::new(cdp)).map_err(|error| {
-            CargoFlashError::FailedChipDescriptionParsing {
+            RoverError::FailedChipDescriptionParsing {
                 source: error,
                 path: cdp.clone(),
             }
@@ -144,7 +150,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     let work_dir = PathBuf::from(if let Some(work_dir) = opt.general().work_dir() {
         let work_dir = dunce::canonicalize(work_dir.clone()).unwrap();
         std::env::set_current_dir(&work_dir).map_err(|error| {
-            CargoFlashError::FailedToChangeWorkingDirectory {
+            RoverError::FailedToChangeWorkingDirectory {
                 source: error,
                 path: format!("{}", work_dir.display()),
             }
@@ -173,7 +179,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
         (
             build_artifact(&work_dir, &args).map_err(|error| {
                 if let Some(ref work_dir) = opt.general().work_dir() {
-                    CargoFlashError::FailedToBuildExternalCargoProject {
+                    RoverError::FailedToBuildExternalCargoProject {
                         source: error,
                         // This unwrap is okay, because if we get this error, the path was properly canonicalized on the internal
                         // `cargo build` step.
@@ -183,7 +189,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
                         ),
                     }
                 } else {
-                    CargoFlashError::FailedToBuildCargoProject(error)
+                    RoverError::FailedToBuildCargoProject(error)
                 }
             })?,
             Format::Elf,
@@ -194,7 +200,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     let mut data_buffer = Vec::new();
 
     // Try to open the firmware file.
-    let mut file = File::open(&path).map_err(|error| CargoFlashError::FailedToOpenElf {
+    let mut file = File::open(&path).map_err(|error| RoverError::FailedToOpenElf {
         source: error,
         path: format!("{}", path.display()),
     })?;
@@ -203,7 +209,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     // If we do not know the target yet, try and auto detect and create the flashloader lateron.
     let (target_selector, flash_loader) = if let Some(chip_name) = &opt.general().chip() {
         let target = probe_rs::config::get_target_by_name(chip_name).map_err(|error| {
-            CargoFlashError::ChipNotFound {
+            RoverError::ChipNotFound {
                 source: error,
                 name: chip_name.clone(),
             }
@@ -225,7 +231,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     let mut probe = open_probe(&opt)?;
     probe
         .select_protocol(opt.probe().protocol())
-        .map_err(|error| CargoFlashError::FailedToSelectProtocol {
+        .map_err(|error| RoverError::FailedToSelectProtocol {
             source: error,
             protocol: opt.probe().protocol(),
         })?;
@@ -234,12 +240,13 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     // Return the actual speed the probe has set afterwards.
     // This can deviate from the speed we set as some probes just allow for a set of values and chose the closest one.
     let protocol_speed = if let Some(speed) = opt.probe().speed() {
-        let actual_speed = probe.set_speed(speed).map_err(|error| {
-            CargoFlashError::FailedToSelectProtocolSpeed {
-                source: error,
-                speed,
-            }
-        })?;
+        let actual_speed =
+            probe
+                .set_speed(speed)
+                .map_err(|error| RoverError::FailedToSelectProtocolSpeed {
+                    source: error,
+                    speed,
+                })?;
 
         if actual_speed < speed {
             log::warn!(
@@ -268,7 +275,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
     } else {
         probe.attach(target_selector)
     }
-    .map_err(|error| CargoFlashError::AttachingFailed {
+    .map_err(|error| RoverError::AttachingFailed {
         source: error,
         connect_under_reset: opt.general().connect_under_reset(),
     })?;
@@ -277,7 +284,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
         // Start the timer to measure how long flashing took.
         let instant = Instant::now();
 
-        logging::println(format!(
+        probe_rs_logging::println(format!(
             "    {} {}",
             "Flashing".green().bold(),
             path.display()
@@ -288,37 +295,48 @@ fn main_try(_uses_cargo: bool) -> Result<(), CargoFlashError> {
 
         // Stop timer.
         let elapsed = instant.elapsed();
-        logging::println(format!(
+        probe_rs_logging::println(format!(
             "    {} in {}s",
             "Finished".green().bold(),
             elapsed.as_millis() as f32 / 1000.0,
         ));
+    }
 
-        {
-            let mut core = session
-                .core(0)
-                .map_err(CargoFlashError::AttachingToCoreFailed)?;
-            if opt.reset().halt_afterwards() {
-                core.reset_and_halt(std::time::Duration::from_millis(500))
-                    .map_err(CargoFlashError::TargetResetFailed)?;
-            } else {
-                core.reset()
-                    .map_err(CargoFlashError::TargetResetHaltFailed)?;
-            }
+    if opt.reset().enabled() {
+        let mut core = session.core(0).map_err(RoverError::AttachingToCoreFailed)?;
+        if opt.reset().halt_afterwards() {
+            core.reset_and_halt(std::time::Duration::from_millis(500))
+                .map_err(RoverError::TargetResetFailed)?;
+        } else {
+            core.reset().map_err(RoverError::TargetResetHaltFailed)?;
         }
+    }
+
+    let session = Arc::new(Mutex::new(session));
+
+    let mut handles = vec![];
+
+    if opt.gdb().enabled() {
+        let link = opt.gdb().socket().clone();
+        let session = session.clone();
+        handles.push(gdb::run_gdb(session, link));
+    }
+
+    if opt.logging().enabled() {
+        handles.push(run_logging(session, path, opt.logging().channels())?);
     }
 
     Ok(())
 }
 
 /// Print all the available families and their contained chips to the commandline.
-fn print_families() -> Result<(), CargoFlashError> {
-    logging::println("Available chips:");
-    for family in probe_rs::config::families().map_err(CargoFlashError::FailedToReadFamilies)? {
-        logging::println(&family.name);
-        logging::println("    Variants:");
+fn print_families() -> Result<(), RoverError> {
+    probe_rs_logging::println("Available chips:");
+    for family in probe_rs::config::families().map_err(RoverError::FailedToReadFamilies)? {
+        probe_rs_logging::println(&family.name);
+        probe_rs_logging::println("    Variants:");
         for variant in family.variants() {
-            logging::println(format!("        {}", variant.name));
+            probe_rs_logging::println(format!("        {}", variant.name));
         }
     }
     Ok(())
@@ -329,39 +347,39 @@ fn list_connected_probes() {
     let probes = Probe::list_all();
 
     if !probes.is_empty() {
-        logging::println("The following debug probes were found:");
+        probe_rs_logging::println("The following debug probes were found:");
         probes
             .iter()
             .enumerate()
             .for_each(|(num, link)| println!("[{}]: {:?}", num, link));
     } else {
-        logging::println("No debug probes were found.");
+        probe_rs_logging::println("No debug probes were found.");
     }
 }
 
 /// Tries to open the debug probe from the given commandline arguments.
 /// This ensures that there is only one probe connected or if multiple probes are found,
 /// a single one is specified via the commandline parameters.
-fn open_probe(config: &Config) -> Result<Probe, CargoFlashError> {
+fn open_probe(config: &Config) -> Result<Probe, RoverError> {
     if config.dry_run() {
         return Ok(Probe::from_specific_probe(Box::new(FakeProbe::new())));
     }
 
     // If we got a probe selector as an argument, open the probe matching the selector if possible.
     match &config.probe().selector() {
-        Some(selector) => Probe::open(selector.clone()).map_err(CargoFlashError::FailedToOpenProbe),
+        Some(selector) => Probe::open(selector.clone()).map_err(RoverError::FailedToOpenProbe),
         None => {
             match (config.probe().usb_vid(), config.probe().usb_pid()) {
                 (Some(vid), Some(pid)) => {
                     let selector = DebugProbeSelector {
                         vendor_id: u16::from_str_radix(vid, 16)
-                            .map_err(|_| CargoFlashError::FailedToParseCredentials)?,
+                            .map_err(|_| RoverError::FailedToParseCredentials)?,
                         product_id: u16::from_str_radix(pid, 16)
-                            .map_err(|_| CargoFlashError::FailedToParseCredentials)?,
+                            .map_err(|_| RoverError::FailedToParseCredentials)?,
                         serial_number: config.probe().serial().clone(),
                     };
                     // if two probes with the same VID:PID pair exist we just choose one
-                    Probe::open(selector).map_err(CargoFlashError::FailedToOpenProbe)
+                    Probe::open(selector).map_err(RoverError::FailedToOpenProbe)
                 }
                 _ => {
                     if config.probe().usb_vid().is_some() {
@@ -375,7 +393,7 @@ fn open_probe(config: &Config) -> Result<Probe, CargoFlashError> {
                     // a single probe detected.
                     let list = Probe::list_all();
                     if list.len() > 1 {
-                        Err(CargoFlashError::MultipleProbesFound { list })
+                        Err(RoverError::MultipleProbesFound { list })
                     } else {
                         Probe::open(
                             list.first()
@@ -384,9 +402,9 @@ fn open_probe(config: &Config) -> Result<Probe, CargoFlashError> {
                                         Some(format!("{:?}", info.probe_type));
                                     info
                                 })
-                                .ok_or_else(|| CargoFlashError::NoProbesFound)?,
+                                .ok_or_else(|| RoverError::NoProbesFound)?,
                         )
-                        .map_err(CargoFlashError::FailedToOpenProbe)
+                        .map_err(RoverError::FailedToOpenProbe)
                     }
                 }
             }

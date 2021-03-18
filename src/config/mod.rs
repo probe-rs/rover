@@ -20,7 +20,10 @@ pub struct Config {
     reset: Reset,
     #[structopt(flatten)]
     probe: Probe,
-    channels: Vec<Channel>,
+    #[structopt(flatten)]
+    gdb: Gdb,
+    #[structopt(flatten)]
+    logging: Logging,
 
     #[structopt(short = "V", long = "version")]
     version: bool,
@@ -79,9 +82,14 @@ impl Config {
         &self.probe
     }
 
-    /// Get a reference to the config's channels.
-    pub fn channels(&self) -> &Vec<Channel> {
-        &self.channels
+    /// Get a reference to the config's gdb.
+    pub fn gdb(&self) -> &Gdb {
+        &self.gdb
+    }
+
+    /// Get a reference to the config's logging.
+    pub fn logging(&self) -> &Logging {
+        &self.logging
     }
 
     /// Get a reference to the config's version.
@@ -307,6 +315,29 @@ impl General {
 
 /// The logging config struct which controls what logging facilities to use and how.
 #[derive(Debug, Deserialize, Serialize, StructOpt)]
+pub struct Gdb {
+    #[structopt(long = "gdb.enabled")]
+    enabled: Option<bool>,
+    #[structopt(long = "gdb.socket")]
+    socket: Option<String>,
+}
+
+impl Gdb {
+    pub fn enabled(&self) -> bool {
+        if let Some(enabled) = self.enabled {
+            enabled
+        } else {
+            self.socket.is_some()
+        }
+    }
+
+    pub fn socket(&self) -> &Option<String> {
+        &self.socket
+    }
+}
+
+/// The logging config struct which controls what logging facilities to use and how.
+#[derive(Debug, Deserialize, Serialize, StructOpt)]
 pub struct Logging {
     #[structopt(long = "logging.enabled")]
     enabled: Option<bool>,
@@ -330,8 +361,20 @@ impl Logging {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Channel {
-    kind: ChannelKind,
-    socket: SocketKind,
+    kinds: Vec<ChannelKind>,
+    link: LinkKind,
+}
+
+impl Channel {
+    /// Get a reference to the channel's kind.
+    pub fn kinds(&self) -> &Vec<ChannelKind> {
+        &self.kinds
+    }
+
+    /// Get a reference to the channel's link.
+    pub fn link(&self) -> &LinkKind {
+        &self.link
+    }
 }
 
 impl FromStr for Channel {
@@ -342,25 +385,23 @@ impl FromStr for Channel {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum SocketKind {
-    Stdout,
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
+pub enum LinkKind {
+    Command(String),
     Tcp(String),
-    Websocket(String),
+    WebSocket(String),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum ChannelKind {
     Rtt {
-        up: Option<usize>,
-        down: Option<usize>,
-        name: Option<String>,
+        up: usize,
+        down: usize,
         mode: RttMode,
     },
     Itm {
         mode: ItmMode,
     },
-    Gdb,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -467,7 +508,8 @@ mod test {
     use probe_rs::flashing::Format;
 
     use super::{
-        Channel, ChannelKind, Config, Configs, Flashing, General, ItmMode, Probe, Reset, SocketKind,
+        Channel, ChannelKind, Config, Configs, Flashing, Gdb, General, ItmMode, LinkKind, Logging,
+        Probe, Reset,
     };
 
     #[test]
@@ -510,10 +552,17 @@ mod test {
                 speed: None,
                 selector: None,
             },
-            channels: vec![Channel {
-                kind: ChannelKind::Itm { mode: ItmMode::Raw },
-                socket: SocketKind::Stdout,
-            }],
+            gdb: Gdb {
+                enabled: None,
+                socket: None,
+            },
+            logging: Logging {
+                channels: vec![Channel {
+                    kinds: vec![ChannelKind::Itm { mode: ItmMode::Raw }],
+                    link: LinkKind::Command("echo".into()),
+                }],
+                enabled: None,
+            },
             version: false,
             list_chips: false,
             list_probes: false,

@@ -5,6 +5,7 @@
 - GDB
 - Backtrace
 - verify command
+- replace goblin with object
 
 # rover
 

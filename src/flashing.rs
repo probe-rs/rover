@@ -7,7 +7,7 @@ use probe_rs::{
 };
 use probe_rs_cli_util::logging;
 
-use crate::{config::Config, diagnostics::CargoFlashError};
+use crate::{config::Config, diagnostics::RoverError};
 
 /// Performs the flash download with the given loader. Ensure that the loader has the data to load already stored.
 /// This function also manages the update and display of progress bars.
@@ -17,11 +17,11 @@ pub fn run_flash_download(
     format: &Format,
     config: &Config,
     loader: Option<FlashLoader>,
-) -> Result<(), CargoFlashError> {
+) -> Result<(), RoverError> {
     let mut buffer = Vec::new();
 
     // Add data from the ELF.
-    let mut file = File::open(&path).map_err(|error| CargoFlashError::FailedToOpenElf {
+    let mut file = File::open(&path).map_err(|error| RoverError::FailedToOpenElf {
         source: error,
         path: format!("{}", path.display()),
     })?;
@@ -151,7 +151,7 @@ pub fn run_flash_download(
 
         loader
             .commit(session, &progress, false, config.dry_run())
-            .map_err(|error| CargoFlashError::FlashingFailed {
+            .map_err(|error| RoverError::FlashingFailed {
                 source: error,
                 target: session.target().clone(),
                 target_spec: config.general().chip().clone(),
@@ -168,7 +168,7 @@ pub fn run_flash_download(
                 false,
                 config.dry_run(),
             )
-            .map_err(|error| CargoFlashError::FlashingFailed {
+            .map_err(|error| RoverError::FlashingFailed {
                 source: error,
                 target: session.target().clone(),
                 target_spec: config.general().chip().clone(),
@@ -187,7 +187,7 @@ pub fn build_flashloader<'data>(
     format: &Format,
     buffer: &'data mut Vec<Vec<u8>>,
     keep_unwritten: bool,
-) -> Result<FlashLoader<'data>, CargoFlashError> {
+) -> Result<FlashLoader<'data>, RoverError> {
     // Create the flash loader
     let mut loader = FlashLoader::new(
         target.memory_map.to_vec(),
@@ -199,17 +199,17 @@ pub fn build_flashloader<'data>(
         Format::Bin(bin_options) => {
             loader
                 .load_bin_data(buffer, file, bin_options.clone())
-                .map_err(CargoFlashError::FailedToLoadElfData)?;
+                .map_err(RoverError::FailedToLoadElfData)?;
         }
         Format::Hex => {
             loader
                 .load_hex_data(buffer, file)
-                .map_err(CargoFlashError::FailedToLoadElfData)?;
+                .map_err(RoverError::FailedToLoadElfData)?;
         }
         Format::Elf => {
             loader
                 .load_elf_data(buffer, file)
-                .map_err(CargoFlashError::FailedToLoadElfData)?;
+                .map_err(RoverError::FailedToLoadElfData)?;
         }
     }
 

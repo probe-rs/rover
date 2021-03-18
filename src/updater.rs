@@ -9,10 +9,10 @@ use tungstenite::{accept, Error, HandshakeError, Message, WebSocket};
 
 /// The `Updater` trait specifies an interface for a statemachine updater.
 /// An `Updater` is basically a self contained unit that runs asynchronously and pushes/receives events to/from mpscs.
-pub trait Updater {
+pub trait Updater<I, O> {
     /// Starts the `Updater`.
     /// This should never block and run the `Updater` asynchronously.
-    fn start<I, O>(&mut self) -> UpdaterChannel<I, O>
+    fn start(&mut self) -> UpdaterChannel<I, O>
     where
         I: DeserializeOwned + Send + Sync + Debug + 'static,
         O: Serialize + Send + Sync + Debug + 'static;
@@ -20,6 +20,20 @@ pub trait Updater {
     /// Returns `Ok` if everything went smooth during the run of the `Updater`.
     /// Returns `Err` if something went wrong during the run of the `Updater`.
     fn stop(&mut self) -> Result<(), ()>;
+}
+
+impl<I, O> Updater<I, O> for Box<dyn Updater<I, O>> {
+    fn start(&mut self) -> UpdaterChannel<I, O>
+    where
+        I: DeserializeOwned + Send + Sync + Debug + 'static,
+        O: Serialize + Send + Sync + Debug + 'static,
+    {
+        Updater::start(self)
+    }
+
+    fn stop(&mut self) -> Result<(), ()> {
+        Updater::stop(self)
+    }
 }
 
 /// A complete channel to an updater.
@@ -163,8 +177,8 @@ impl WebsocketUpdater {
     }
 }
 
-impl Updater for WebsocketUpdater {
-    fn start<I, O>(&mut self) -> UpdaterChannel<I, O>
+impl<I, O> Updater<I, O> for WebsocketUpdater {
+    fn start(&mut self) -> UpdaterChannel<I, O>
     where
         I: DeserializeOwned + Send + Sync + Debug + 'static,
         O: Serialize + Send + Sync + Debug + 'static,
