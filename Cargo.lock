@@ -844,7 +844,7 @@ dependencies = [
 [[package]]
 name = "gdb-server"
 version = "0.10.0"
-source = "git+https://github.com/probe-rs/probe-rs#32cca7dad80371892b57c365c7c8303734454331"
+source = "git+https://github.com/probe-rs/probe-rs#2234f1693362a0c64d3dc96a1c90f60df41d2f07"
 dependencies = [
  "anyhow",
  "async-std",
@@ -1167,15 +1167,13 @@ dependencies = [
 
 [[package]]
 name = "itm-decode"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52315bfaeeb49e3d13176b694d830e11a8f42185318886c1e48875a9d3df7258"
+checksum = "cd02c370de5bcaf5f1206dda960c8ec6425c4f3862d7c654a1b4f75f6678300f"
 dependencies = [
- "anyhow",
  "bitmatch",
  "bitvec",
  "funty",
- "structopt",
 ]
 
 [[package]]
@@ -1616,7 +1614,7 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 [[package]]
 name = "probe-rs"
 version = "0.10.1"
-source = "git+https://github.com/probe-rs/probe-rs#32cca7dad80371892b57c365c7c8303734454331"
+source = "git+https://github.com/probe-rs/probe-rs#2234f1693362a0c64d3dc96a1c90f60df41d2f07"
 dependencies = [
  "anyhow",
  "base64",
@@ -1649,7 +1647,7 @@ dependencies = [
 [[package]]
 name = "probe-rs-cli-util"
 version = "0.10.1"
-source = "git+https://github.com/probe-rs/probe-rs#32cca7dad80371892b57c365c7c8303734454331"
+source = "git+https://github.com/probe-rs/probe-rs#2234f1693362a0c64d3dc96a1c90f60df41d2f07"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -1683,7 +1681,7 @@ dependencies = [
 [[package]]
 name = "probe-rs-target"
 version = "0.1.0"
-source = "git+https://github.com/probe-rs/probe-rs#32cca7dad80371892b57c365c7c8303734454331"
+source = "git+https://github.com/probe-rs/probe-rs#2234f1693362a0c64d3dc96a1c90f60df41d2f07"
 dependencies = [
  "base64",
  "jep106",
