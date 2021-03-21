@@ -9,9 +9,11 @@ default:
     #   "OFF", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"
     log_level: WARN
     # The parent config this config will inherit values from which are undefined.
-    derives: "default"
+    derives: default
     # Use this flag to assert the nreset & ntrst pins during attaching the probe to the chip.
     connect_under_reset: false
+    # The format of the binary. This defaults to ELF.
+    format: Elf
 
   flashing:
     # Whether or not the target should be flashed.
@@ -27,7 +29,7 @@ default:
   reset:
     # Whether or not the target should be reset.
     # When flashing is enabled as well, the target will be reset after flashing.
-    enabled: false
+    enabled: true
     # Whether or not the target should be halted after reset.
     halt_afterwards: false
 
@@ -43,12 +45,26 @@ default:
     # The speed in kHz of the data link to the target.
     speed: ~
 
-  channels:
+  logging:
       # The kind of the channel. Possible are:
       #   Itm, Rtt, Gdb
-    - kind:
-        Itm:
-          mode: Raw
+    channels: []
+    # - kind:
+    #     Itm:
+    #       mode: Raw
       # The socket type to expose this to. Possible are:
       #   Stdout, Tcp, Websocket
-      socket: Stdout
+      # socket: Stdout
+
+  gdb:
+    enabled: false
+
+  version: false
+  list_chips: false
+  list_probes: false
+  disable_progressbars: false
+  release: false
+  no_default_features: false
+  all_features: false
+  features: []
+  dry_run: false

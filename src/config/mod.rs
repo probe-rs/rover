@@ -1,8 +1,9 @@
-use std::{collections::HashMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, convert::TryInto, path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context};
 use probe_rs::{flashing::Format, DebugProbeSelector, WireProtocol};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use structopt::StructOpt;
 
 /// A struct which holds all configs.
@@ -177,12 +178,13 @@ pub struct Flashing {
 
 impl Flashing {
     pub fn enabled(&self) -> bool {
-        if let Some(enabled) = self.enabled {
-            enabled
-        } else {
-            self.restore_unwritten_bytes.is_some()
-                || self.flash_layout_output_path.is_some()
-                || self.do_chip_erase.is_some()
+        match self.enabled {
+            Some(true) | None => true,
+            _ => {
+                self.restore_unwritten_bytes.is_some()
+                    || self.flash_layout_output_path.is_some()
+                    || self.do_chip_erase.is_some()
+            }
         }
     }
 
@@ -211,10 +213,9 @@ pub struct Reset {
 
 impl Reset {
     pub fn enabled(&self) -> bool {
-        if let Some(enabled) = self.enabled {
-            enabled
-        } else {
-            self.halt_afterwards.is_some()
+        match self.enabled {
+            Some(true) | None => true,
+            _ => self.halt_afterwards.is_some(),
         }
     }
 
@@ -421,7 +422,7 @@ pub enum ItmMode {
 }
 
 impl Configs {
-    pub fn try_new(name: impl AsRef<str>) -> anyhow::Result<Config> {
+    pub fn try_new(name: impl AsRef<str>, args: &Vec<String>) -> anyhow::Result<Config> {
         let mut s = config::Config::new();
 
         // Start off by merging in the default configuration file.
@@ -452,20 +453,23 @@ impl Configs {
                 .with_context(|| format!("Failed to merge config file '{}", file))?;
         }
 
-        let map: HashMap<String, serde_json::value::Value> = s.try_into()?;
+        let mut map: HashMap<String, serde_json::value::Value> = s.try_into()?;
 
-        let config = match map.get(name.as_ref()) {
-            Some(c) => c,
-            None => bail!(
+        if !map.contains_key(name.as_ref()) {
+            bail!(
                 "Cannot find config \"{}\" (available configs: {})",
                 name.as_ref(),
                 map.keys().cloned().collect::<Vec<String>>().join(", "),
-            ),
-        };
+            );
+        }
+        let mut structopt = Config::from_iter(args);
+        structopt.general.derives = Some(name.as_ref().to_string());
+        let structopt: Value = serde_json::to_value(&structopt)?;
+        map.insert("structopt".into(), structopt.clone());
 
         let mut s = config::Config::new();
 
-        Self::apply(name.as_ref(), &mut s, config, &map)?;
+        Self::apply("structopt", &mut s, &structopt, &map)?;
 
         // You can deserialize (and thus freeze) the entire configuration
         Ok(s.try_into()?)
@@ -487,10 +491,10 @@ impl Configs {
             if derives == name {
                 log::warn!("Endless recursion within the {} config.", derives);
             } else if let Some(dconfig) = map.get(derives) {
+                println!("derives {}", derives);
                 Self::apply(derives, s, dconfig, map)?;
             }
         }
-
         // Merge this current config.
         s.merge(config::File::from_str(
             // This unwrap can never fail as we just deserialized this. The reverse has to work!
@@ -516,7 +520,7 @@ mod test {
     fn default_config() {
         // Ensure the default config can be parsed.
 
-        let _config = Configs::try_new("default").unwrap();
+        let _config = Configs::try_new("default", &vec![]).unwrap();
     }
 
     #[test]

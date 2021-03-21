@@ -1,76 +1,13 @@
 use std::fmt::Debug;
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
 
 use serde::{de::DeserializeOwned, Serialize};
 use tungstenite::{accept, Error, HandshakeError, Message, WebSocket};
 
-/// The `Updater` trait specifies an interface for a statemachine updater.
-/// An `Updater` is basically a self contained unit that runs asynchronously and pushes/receives events to/from mpscs.
-pub trait Updater<I, O> {
-    /// Starts the `Updater`.
-    /// This should never block and run the `Updater` asynchronously.
-    fn start(&mut self) -> UpdaterChannel<I, O>
-    where
-        I: DeserializeOwned + Send + Sync + Debug + 'static,
-        O: Serialize + Send + Sync + Debug + 'static;
-    /// Stops the `Updater` if currently running.
-    /// Returns `Ok` if everything went smooth during the run of the `Updater`.
-    /// Returns `Err` if something went wrong during the run of the `Updater`.
-    fn stop(&mut self) -> Result<(), ()>;
-}
-
-impl<I, O> Updater<I, O> for Box<dyn Updater<I, O>> {
-    fn start(&mut self) -> UpdaterChannel<I, O>
-    where
-        I: DeserializeOwned + Send + Sync + Debug + 'static,
-        O: Serialize + Send + Sync + Debug + 'static,
-    {
-        Updater::start(self)
-    }
-
-    fn stop(&mut self) -> Result<(), ()> {
-        Updater::stop(self)
-    }
-}
-
-/// A complete channel to an updater.
-/// Rx and tx naming is done from the user view of the channel, not the `Updater` view.
-pub struct UpdaterChannel<I, O>
-where
-    I: DeserializeOwned + Send + Sync + Debug + 'static,
-    O: Serialize + Send + Sync + Debug + 'static,
-{
-    /// The rx where the user reads data from.
-    rx: Receiver<I>,
-    /// The tx where the user sends data to.
-    tx: Sender<O>,
-}
-
-impl<I, O> UpdaterChannel<I, O>
-where
-    I: DeserializeOwned + Send + Sync + Debug + 'static,
-    O: Serialize + Send + Sync + Debug + 'static,
-{
-    /// Creates a new `UpdaterChannel` where crossover is done internally.
-    ///
-    /// The argument naming is done from the `Updater`s view. Where as the member naming is done from a user point of view.
-    pub fn new(rx: Sender<O>, tx: Receiver<I>) -> Self {
-        Self { rx: tx, tx: rx }
-    }
-
-    /// Returns the rx end of the channel.
-    pub fn rx(&mut self) -> &mut Receiver<I> {
-        &mut self.rx
-    }
-
-    /// Returns the tx end of the channel.
-    pub fn tx(&mut self) -> &mut Sender<O> {
-        &mut self.tx
-    }
-}
+use super::{Updater, UpdaterChannel, Value};
 
 /// An updater which receives and sends it's updates from and to a websocket.
 /// It supports concurrent connections from multiple clients and handles disconnects and errors gracefully.
@@ -89,13 +26,23 @@ impl WebsocketUpdater {
     }
 
     /// Writes a message to all connected websockets and removes websockets that are no longer connected.
-    fn write_to_all_sockets<I>(sockets: &mut Vec<(WebSocket<TcpStream>, SocketAddr)>, update: &I)
-    where
-        I: Serialize + Send + Sync + Debug + 'static,
+    fn write_to_all_sockets<O>(
+        sockets: &mut Vec<(WebSocket<TcpStream>, SocketAddr)>,
+        update: Value<O>,
+    ) where
+        O: Serialize + Send + Sync + Debug + 'static,
     {
         let mut to_remove = vec![];
         for (i, (socket, addr)) in sockets.iter_mut().enumerate() {
-            match socket.write_message(Message::Text(serde_json::to_string(update).unwrap())) {
+            let update = match &update {
+                Value::StructuredString(update) => {
+                    socket.write_message(Message::Text(serde_json::to_string(&update).unwrap()))
+                }
+                Value::Bytes(bytes) => socket.write_message(Message::Binary(bytes.clone())),
+                Value::String(string) => socket.write_message(Message::Text(string.clone())),
+            };
+
+            match update {
                 Ok(_) => (),
                 Err(Error::ConnectionClosed) => {
                     log::info!("Socket connection to {} was closed", addr);
@@ -128,7 +75,7 @@ impl WebsocketUpdater {
     /// Reads all messages from all connected websockets and removes websockets that are no longer connected.
     fn read_from_all_sockets<I>(
         sockets: &mut Vec<(WebSocket<TcpStream>, SocketAddr)>,
-        sender: Sender<I>,
+        sender: Sender<Value<I>>,
     ) where
         I: DeserializeOwned + Send + Sync + Debug + 'static,
     {
@@ -137,15 +84,22 @@ impl WebsocketUpdater {
             match socket.read_message() {
                 Ok(msg) => match msg {
                     // For now we handle text messages only.
-                    Message::Text(string) => match serde_json::from_str(&string) {
-                        Ok(update) => {
-                            log::debug!("Parsed JSON: {:#?}", update);
-                            let _ = sender.send(update);
+                    Message::Text(string) => {
+                        let v: Result<I, _> = serde_json::from_str(&string);
+                        match v {
+                            Ok(update) => {
+                                log::debug!("Parsed JSON: {:#?}", update);
+                                let _ = sender.send(Value::StructuredString(update));
+                            }
+                            Err(error) => {
+                                log::debug!("Failed to parse JSON: {:#?}", error);
+                                let _ = sender.send(Value::String(string));
+                            }
                         }
-                        Err(error) => {
-                            log::error!("Failed to parse JSON: {:#?}", error);
-                        }
-                    },
+                    }
+                    Message::Binary(binary) => {
+                        let _ = sender.send(Value::Bytes(binary));
+                    }
                     _ => (),
                 },
                 Err(tungstenite::Error::ConnectionClosed) => {
@@ -185,8 +139,8 @@ impl<I, O> Updater<I, O> for WebsocketUpdater {
     {
         let mut sockets = Vec::new();
 
-        let (rx, inbound) = channel::<O>();
-        let (outbound, tx) = channel::<I>();
+        let (rx, inbound) = channel::<Value<O>>();
+        let (outbound, tx) = channel::<Value<I>>();
         let (halt_tx, halt_rx) = channel::<()>();
 
         log::info!("Opening websocket on '{}'", self.connection_string);
@@ -202,7 +156,7 @@ impl<I, O> Updater<I, O> for WebsocketUpdater {
                         return ();
                     }
 
-                    // Handle new incomming connections.
+                    // Handle new incoming connections.
                     match incoming.next() {
                         Some(Ok(stream)) => {
                             // Assume we always get a peer addr, so this unwrap is fine.
@@ -244,7 +198,7 @@ impl<I, O> Updater<I, O> for WebsocketUpdater {
                     // Send at max one pending message to each socket.
                     match inbound.try_recv() {
                         Ok(update) => {
-                            Self::write_to_all_sockets(&mut sockets, &update);
+                            Self::write_to_all_sockets(&mut sockets, update);
                         }
                         _ => (),
                     }

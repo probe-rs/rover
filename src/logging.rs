@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     io::{Read, Seek},
     path::Path,
+    process::Command,
     sync::{Arc, Mutex},
     thread::JoinHandle,
     time::Duration,
@@ -15,21 +16,24 @@ use probe_rs_rtt::{DownChannel, Rtt, ScanRegion, UpChannel};
 use crate::{
     config::{Channel, ChannelKind, LinkKind, RttMode},
     diagnostics::RoverError,
-    updater::{Updater, UpdaterChannel, WebsocketUpdater},
+    updater::{
+        stdio::StdioUpdater, tcp::TcpUpdater, websocket::WebsocketUpdater, Updater, UpdaterChannel,
+        Value,
+    },
 };
 
 pub fn run_logging(
     session: Arc<Mutex<Session>>,
     elf_path: impl AsRef<Path>,
-    channels: &Vec<Channel>,
+    channels: Vec<Channel>,
 ) -> Result<JoinHandle<Result<(), RoverError>>, RoverError> {
     let mut updaters: HashMap<LinkKind, UpdaterChannel<(), ()>> = HashMap::new();
-    for channel in channels {
+    for channel in &channels {
         let link = channel.link().clone();
         updaters.insert(
-            link,
+            link.clone(),
             match link {
-                LinkKind::Command(command) => CommandUpdater::new(command).start(),
+                LinkKind::Command(command) => StdioUpdater::new(Command::new(command)).start(),
                 LinkKind::Tcp(socket) => TcpUpdater::new(socket).start(),
                 LinkKind::WebSocket(socket) => WebsocketUpdater::new(socket).start(),
             },
@@ -38,14 +42,18 @@ pub fn run_logging(
 
     // Initialize defmt if necessary.
     let mut defmt_state = None;
-    for channel in channels {
+    for channel in &channels {
         for kind in channel.kinds() {
             match kind {
-                ChannelKind::Rtt { up, down, mode } => match mode {
+                ChannelKind::Rtt {
+                    up: _up,
+                    down: _down,
+                    mode,
+                } => match mode {
                     RttMode::Defmt | RttMode::DefmtJson => {
-                        if let Some(defmt_state) = defmt_state {
-                        } else {
-                            defmt_state = Some(create_defmt_state(elf_path)?);
+                        if defmt_state.is_none() {
+                            defmt_state = Some(create_defmt_state(elf_path.as_ref())?);
+                            break;
                         }
                     }
                     _ => (),
@@ -55,9 +63,11 @@ pub fn run_logging(
         }
     }
 
+    let elf_path = elf_path.as_ref().to_path_buf();
+
     Ok(std::thread::spawn(move || {
-        let t = std::time::Instant::now();
-        let mut error = None;
+        let _t = std::time::Instant::now();
+        // let mut error = None;
 
         let mut i = 1;
 
@@ -66,7 +76,7 @@ pub fn run_logging(
             log::info!("Initializing RTT (attempt {})...", i);
             i += 1;
 
-            let rtt_header_address = if let Ok(mut file) = File::open(elf_path) {
+            let rtt_header_address = if let Ok(mut file) = File::open(elf_path.as_path()) {
                 if let Some(address) = get_rtt_symbol(&mut file) {
                     log::info!("RTT symbol found at address {:x}", address);
                     ScanRegion::Exact(address as u32)
@@ -80,15 +90,21 @@ pub fn run_logging(
             };
 
             match Rtt::attach_region(session.clone(), &rtt_header_address) {
-                Ok(rtt) => {
+                Ok(mut rtt) => {
                     log::info!("RTT synbols found.");
 
+                    let mut up_channels = rtt.up_channels().drain().collect::<Vec<_>>();
+
                     loop {
-                        for channel in channels {
+                        for channel in &channels {
                             for kind in channel.kinds() {
                                 match kind {
-                                    ChannelKind::Rtt { up, down, mode } => {
-                                        let up_channel = rtt.up_channels().get(*up);
+                                    ChannelKind::Rtt {
+                                        up,
+                                        down: _down,
+                                        mode,
+                                    } => {
+                                        let mut up_channel = up_channels.get_mut(*up);
                                         let data = if let Some(up_channel) = &mut up_channel {
                                             poll_rtt(up_channel)
                                         } else {
@@ -98,26 +114,30 @@ pub fn run_logging(
 
                                         match mode {
                                             RttMode::Raw => {
-                                                updaters[channel.link()].tx().send(data);
+                                                updaters
+                                                    .get_mut(channel.link())
+                                                    .map(|v| v.tx().send(Value::Bytes(data)));
                                             }
-                                            RttMode::String { timestamps } => {
-                                                let mut incoming =
+                                            RttMode::String { timestamps: _ts } => {
+                                                let incoming =
                                                     String::from_utf8_lossy(&data).to_string();
-                                                updaters[channel.link()].tx().send(incoming);
+                                                updaters
+                                                    .get_mut(channel.link())
+                                                    .map(|v| v.tx().send(Value::String(incoming)));
                                             }
                                             RttMode::StringJson => {}
                                             RttMode::Defmt => {}
                                             RttMode::DefmtJson => {}
                                         }
                                     }
-                                    ChannelKind::Itm { mode } => {}
+                                    ChannelKind::Itm { mode: _mode } => {}
                                 }
                             }
                         }
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 }
-                Err(err) => {
+                Err(_err) => {
                     log::warn!("Failed to initialize RTT. Retrying.");
                 }
             };

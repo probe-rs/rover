@@ -7,6 +7,7 @@ mod updater;
 mod util;
 
 use crate::config::Config;
+use crate::config::Configs;
 use anyhow::Result;
 use colored::*;
 use diagnostics::{render_diagnostics, RoverError};
@@ -19,7 +20,6 @@ use std::{
     time::Instant,
 };
 use std::{panic, sync::Mutex};
-use structopt::StructOpt;
 
 use probe_rs::{
     config::TargetSelector,
@@ -43,24 +43,26 @@ lazy_static::lazy_static! {
 }
 
 const ARGUMENTS_TO_REMOVE: &[&str] = &[
-    "chip=",
-    "speed=",
-    "restore-unwritten",
-    "flash-layout=",
-    "chip-description-path=",
+    "general.chip=",
+    "general.chip-descriptions=",
+    "general.file=",
+    "general.format=",
+    "general.work-dir=",
+    "general.connect-under-reset",
+    "probe.speed=",
+    "probe.protocol=",
+    "probe.selector=",
+    "probe.usb-vid=",
+    "probe.usb.pid=",
+    "probe.serial=",
+    "flashing.enabled=",
+    "flashing.restore-unwritten",
+    "flashing.flash-layout=",
+    "reset.halt-afterwards",
     "list-chips",
     "list-probes",
-    "probe=",
-    "file=",
-    "format=",
-    "work-dir=",
     "disable-progressbars",
-    "protocol=",
-    "probe-index=",
-    "reset-halt",
-    "nrf-recover",
-    "log=",
-    "connect-under-reset",
+    "log-level=",
     "dry-run",
 ];
 
@@ -96,25 +98,25 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
         args.remove(1);
     }
 
-    // Get commandline options.
-    let opt = Config::from_iter(&args);
+    // TODO: Select name from commandline.
+    let config = Configs::try_new("default", &args).unwrap();
 
     // If the user instructed us to show the version, show the different info about the binary.
-    if opt.version() {
+    if config.version() {
         util::print_version();
         return Ok(());
     }
 
-    probe_rs_logging::init(Some(opt.general().log_level()));
+    probe_rs_logging::init(Some(config.general().log_level()));
 
     // If someone wants to list the connected probes, just do that and exit.
-    if opt.list_probes() {
+    if config.list_probes() {
         list_connected_probes();
         return Ok(());
     }
 
     // Load the target description given in the cli parameters.
-    for cdp in opt.general().chip_descriptions() {
+    for cdp in config.general().chip_descriptions() {
         probe_rs::config::add_target_from_yaml(&Path::new(cdp)).map_err(|error| {
             RoverError::FailedChipDescriptionParsing {
                 source: error,
@@ -124,13 +126,13 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
     }
 
     // If we were instructed to list all available chips, print a list of all the available targets to the commandline.
-    if opt.list_chips() {
+    if config.list_chips() {
         print_families()?;
         return Ok(());
     }
 
     // Determine what chip to use. If none was set in the config or the commandline, use auto.
-    let chip = if let Some(chip) = &opt.general().chip() {
+    let chip = if let Some(chip) = &config.general().chip() {
         chip.into()
     } else {
         TargetSelector::Auto
@@ -147,7 +149,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
     argument_handling::remove_arguments(ARGUMENTS_TO_REMOVE, &mut args);
 
     // Change the work dir if the user asked to do so. Otherwise use the current working directory
-    let work_dir = PathBuf::from(if let Some(work_dir) = opt.general().work_dir() {
+    let work_dir = PathBuf::from(if let Some(work_dir) = config.general().work_dir() {
         let work_dir = dunce::canonicalize(work_dir.clone()).unwrap();
         std::env::set_current_dir(&work_dir).map_err(|error| {
             RoverError::FailedToChangeWorkingDirectory {
@@ -163,13 +165,13 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
 
     // Get the path to the ELF binary we want to flash.
     // This can either be give from the arguments or can be a cargo build artifact.
-    let (path, format): (PathBuf, Format) = if let Some(path) = opt.general().file() {
+    let (path, format): (PathBuf, Format) = if let Some(path) = config.general().file() {
         (
             path.into(),
-            match opt.general().format() {
+            match config.general().format() {
                 Format::Bin(_) => Format::Bin(BinOptions {
-                    base_address: opt.general().format_base_address(),
-                    skip: opt.general().format_skip().unwrap_or(0),
+                    base_address: config.general().format_base_address(),
+                    skip: config.general().format_skip().unwrap_or(0),
                 }),
                 f => f,
             },
@@ -178,7 +180,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
         // Build the project, and extract the path of the built artifact.
         (
             build_artifact(&work_dir, &args).map_err(|error| {
-                if let Some(ref work_dir) = opt.general().work_dir() {
+                if let Some(ref work_dir) = config.general().work_dir() {
                     RoverError::FailedToBuildExternalCargoProject {
                         source: error,
                         // This unwrap is okay, because if we get this error, the path was properly canonicalized on the internal
@@ -205,9 +207,11 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
         path: format!("{}", path.display()),
     })?;
 
+    println!("NAME: {:?}", &config.general().chip());
+
     // If we know our target yet (given by the commandline), try and create a flashloader with the firmware data.
     // If we do not know the target yet, try and auto detect and create the flashloader lateron.
-    let (target_selector, flash_loader) = if let Some(chip_name) = &opt.general().chip() {
+    let (target_selector, flash_loader) = if let Some(chip_name) = &config.general().chip() {
         let target = probe_rs::config::get_target_by_name(chip_name).map_err(|error| {
             RoverError::ChipNotFound {
                 source: error,
@@ -220,7 +224,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
             &mut file,
             &format,
             &mut data_buffer,
-            opt.flashing().restore_unwritten_bytes(),
+            config.flashing().restore_unwritten_bytes(),
         )?;
         (TargetSelector::Specified(target), Some(loader))
     } else {
@@ -228,18 +232,18 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
     };
 
     // Try and prepare the probe by opening the probe and selecting the given protocol.
-    let mut probe = open_probe(&opt)?;
+    let mut probe = open_probe(&config)?;
     probe
-        .select_protocol(opt.probe().protocol())
+        .select_protocol(config.probe().protocol())
         .map_err(|error| RoverError::FailedToSelectProtocol {
             source: error,
-            protocol: opt.probe().protocol(),
+            protocol: config.probe().protocol(),
         })?;
 
     // Set the protocol speed if some specific speed was given.
     // Return the actual speed the probe has set afterwards.
     // This can deviate from the speed we set as some probes just allow for a set of values and chose the closest one.
-    let protocol_speed = if let Some(speed) = opt.probe().speed() {
+    let protocol_speed = if let Some(speed) = config.probe().speed() {
         let actual_speed =
             probe
                 .set_speed(speed)
@@ -270,17 +274,17 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
     // If we wanto attach under reset, we do this with a special function call.
     // In this case we assume the target to be known.
     // If we do an attach without a hard reset, we also try to automatically detect the chip at hand to improve the userexperience.
-    let mut session = if opt.general().connect_under_reset() {
+    let mut session = if config.general().connect_under_reset() {
         probe.attach_under_reset(target_selector)
     } else {
         probe.attach(target_selector)
     }
     .map_err(|error| RoverError::AttachingFailed {
         source: error,
-        connect_under_reset: opt.general().connect_under_reset(),
+        connect_under_reset: config.general().connect_under_reset(),
     })?;
 
-    if opt.flashing().enabled() {
+    if config.flashing().enabled() {
         // Start the timer to measure how long flashing took.
         let instant = Instant::now();
 
@@ -290,7 +294,7 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
             path.display()
         ));
 
-        flashing::run_flash_download(&mut session, &path, &format, &opt, flash_loader)?;
+        flashing::run_flash_download(&mut session, &path, &format, &config, flash_loader)?;
         // .map_err(|e| handle_flash_error(e, session.target(), opt.chip.as_deref()))?;
 
         // Stop timer.
@@ -302,9 +306,9 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
         ));
     }
 
-    if opt.reset().enabled() {
+    if config.reset().enabled() {
         let mut core = session.core(0).map_err(RoverError::AttachingToCoreFailed)?;
-        if opt.reset().halt_afterwards() {
+        if config.reset().halt_afterwards() {
             core.reset_and_halt(std::time::Duration::from_millis(500))
                 .map_err(RoverError::TargetResetFailed)?;
         } else {
@@ -316,14 +320,18 @@ fn main_try(_uses_cargo: bool) -> Result<(), RoverError> {
 
     let mut handles = vec![];
 
-    if opt.gdb().enabled() {
-        let link = opt.gdb().socket().clone();
+    if config.gdb().enabled() {
+        let link = config.gdb().socket().clone();
         let session = session.clone();
         handles.push(gdb::run_gdb(session, link));
     }
 
-    if opt.logging().enabled() {
-        handles.push(run_logging(session, path, opt.logging().channels())?);
+    if config.logging().enabled() {
+        handles.push(run_logging(
+            session,
+            path,
+            config.logging().channels().clone(),
+        )?);
     }
 
     Ok(())

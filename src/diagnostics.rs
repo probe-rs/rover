@@ -98,9 +98,9 @@ pub enum RoverError {
 }
 
 pub(crate) fn render_diagnostics(error: RoverError) {
-    let (selected_error, hints) = match &error {
+    let (errors_to_omit, hints) = match &error {
         RoverError::NoProbesFound => (
-            error.to_string(),
+            0,
             vec![
                 "If you are on Linux, you most likely need to install the udev rules for your probe.\nSee https://probe.rs/guide/2_probes/udev/ if you do not know how to install them.".into(),
                 "If you are on Windows, make sure to install the correct driver. For J-Link usage you will need the https://zadig.akeo.ie/ driver.".into(),
@@ -108,11 +108,11 @@ pub(crate) fn render_diagnostics(error: RoverError) {
             ],
         ),
         RoverError::FailedToReadFamilies(_e) => (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::FailedToOpenElf { source, path } => (
-            error.to_string(),
+            0,
             match source.kind() {
                 std::io::ErrorKind::NotFound => vec![
                     format!("Make sure the path '{}' is the correct location of your ELF binary.", path)
@@ -122,7 +122,7 @@ pub(crate) fn render_diagnostics(error: RoverError) {
         ),
         RoverError::FailedToLoadElfData(e) => match e {
             FileDownloadError::NoLoadableSegments => (
-                e.to_string(),
+                1,
                 vec![
                     "Please make sure your linker script is correct and not missing at all.".into(),
                     "If you are working with Rust, check your `.cargo/config.toml`? If you are new to the rust-embedded ecosystem, please head over to https://github.com/rust-embedded/cortex-m-quickstart.".into()
@@ -130,31 +130,31 @@ pub(crate) fn render_diagnostics(error: RoverError) {
             ),
             FileDownloadError::Flash(e) => match e {
                 FlashError::NoSuitableNvm {..} => (
-                    e.to_string(),
+                    1,
                     vec![
                         "Make sure the flash region specified in the linkerscript matches the one specified in the datasheet of your chip.".into()
                     ]
                 ),
                 _ => (
-                    e.to_string(),
+                    1,
                     vec![]
                 ),
             },
             _ => (
-                e.to_string(),
+                1,
                 vec![
                     "Make sure you are compiling for the correct architecture of your chip.".into()
                 ],
             ),
         },
         RoverError::FailedToOpenProbe(_e) => (
-            error.to_string(),
+            0,
             vec![
                 "This could be a permission issue. Check our guide on how to make all probes work properly on your system: https://probe.rs/guide/2_probes/.".into()
             ],
         ),
         RoverError::MultipleProbesFound { list } => (
-            error.to_string(),
+            0,
             vec![
                 "You can select a probe with the `--probe` argument. See `--help` for how to use it.".into(),
                 format!("The following devices were found:\n \
@@ -169,75 +169,75 @@ pub(crate) fn render_diagnostics(error: RoverError) {
             ],
         ),
         RoverError::FailedToParseCredentials => (
-            error.to_string(),
+            0,
             vec![
                 "Make sure you specify the chip credentials in hex format.".into()
             ]
         ),
         RoverError::FlashingFailed { source, target, target_spec, .. } => generate_flash_error_hints(source, target, target_spec),
         RoverError::FailedChipDescriptionParsing { .. } => (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::FailedToChangeWorkingDirectory { .. } => (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::FailedToBuildExternalCargoProject { source, path } => match source {
             ArtifactError::NoArtifacts => (
-                source.to_string(),
+                1,
                 vec![
                     "Use '--example' to specify an example to flash.".into(),
                     "Use '--package' to specify which package to flash in a workspace.".into(),
                 ],
             ),
             ArtifactError::MultipleArtifacts => (
-                source.to_string(),
+                1,
                 vec![
                     "Use '--bin' to specify which binary to flash.".into(),
                 ],
             ),
-            ArtifactError::CargoBuild(Some(101)) => (
-                source.to_string(),
+            ArtifactError::CargoBuild(_) => (
+                1,
                 vec![
                     "'cargo build' was not successful. Have a look at the error output above.".into(),
                     format!("Make sure '{}' is indeed a cargo project with a Cargo.toml in it.", path),
                 ],
             ),
             _ => (
-                source.to_string(),
+                1,
                 vec![],
             ),
         },
         RoverError::FailedToBuildCargoProject(e) => match e {
             ArtifactError::NoArtifacts => (
-                error.to_string(),
+                0,
                 vec![
                     "Use '--example' to specify an example to flash.".into(),
                     "Use '--package' to specify which package to flash in a workspace.".into(),
                 ],
             ),
             ArtifactError::MultipleArtifacts => (
-                error.to_string(),
+                0,
                 vec![
                     "Use '--bin' to specify which binary to flash.".into(),
                 ],
             ),
-            ArtifactError::CargoBuild(Some(101)) => (
-                error.to_string(),
+            ArtifactError::CargoBuild(_) => (
+                0,
                 vec![
                     "'cargo build' was not successful. Have a look at the error output above.".into(),
                     "Make sure the working directory you selected is indeed a cargo project with a Cargo.toml in it.".into()
                 ],
             ),
             _ => (
-                error.to_string(),
+                0,
                 vec![],
             ),
         },
         RoverError::ChipNotFound { source, .. } => match source {
             RegistryError::ChipNotFound(_) => (
-                error.to_string(),
+                0,
                 vec![
                     "Did you spell the name of your chip correctly? Capitalization does not matter."
                         .into(),
@@ -246,23 +246,23 @@ pub(crate) fn render_diagnostics(error: RoverError) {
                 ],
             ),
             _ => (
-                error.to_string(),
+                0,
                 vec![],
             ),
         },
         RoverError::FailedToSelectProtocol { .. } => (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::FailedToSelectProtocolSpeed { speed, .. } => (
-            error.to_string(),
+            0,
             vec![
                 format!("Try specifying a speed lower than {} kHz", speed)
             ],
         ),
         RoverError::AttachingFailed { source, connect_under_reset } => match source {
             ProbeRsError::ChipNotFound(RegistryError::ChipAutodetectFailed) => (
-                error.to_string(),
+                0,
                 vec![
                     "Try specifying your chip with the `--chip` argument.".into(),
                     "You can list all the available chips by passing the `--list-chips` argument.".into(),
@@ -270,36 +270,36 @@ pub(crate) fn render_diagnostics(error: RoverError) {
             ),
             _ => if !connect_under_reset {
                 (
-                    error.to_string(),
+                    0,
                     vec![
                         "A hard reset during attaching might help. This will reset the entire chip. Run with `--connect-under-reset` to enable this feature.".into()
                     ],
                 )
             } else {
                 (
-                    error.to_string(),
+                    0,
                     vec![],
                 )
             },
         },
         RoverError::AttachingToCoreFailed(_e) =>  (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::TargetResetFailed(_e) =>  (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::TargetResetHaltFailed(_e) => (
-            error.to_string(),
+            0,
             vec![],
         ),
         RoverError::NoDefmtSection => (
-            error.to_string(),
+            0,
             vec![],
         ),
-        RoverError::DefmtParsing(e) => (
-            e.to_string(),
+        RoverError::DefmtParsing(_e) => (
+            1,
             vec![],
         ),
     };
@@ -309,7 +309,7 @@ pub(crate) fn render_diagnostics(error: RoverError) {
     let mut source = error.source();
     let mut i = 0;
     while let Some(s) = source {
-        if hints.is_empty() {
+        if hints.is_empty() || i >= errors_to_omit {
             let string = format!("{}: {}", i, s);
             write_with_offset(
                 &mut stderr,
@@ -327,9 +327,9 @@ pub(crate) fn render_diagnostics(error: RoverError) {
         source = s.source();
     }
 
-    if !hints.is_empty() {
-        let _ = write_with_offset(&mut stderr, "Error".red().bold(), &selected_error);
-    };
+    // if !hints.is_empty() {
+    //     let _ = write_with_offset(&mut stderr, "Error".red().bold(), &selected_error);
+    // };
 
     let _ = writeln!(stderr);
 
@@ -345,9 +345,9 @@ fn generate_flash_error_hints(
     error: &FlashError,
     target: &Target,
     target_spec: &Option<String>,
-) -> (String, Vec<String>) {
+) -> (usize, Vec<String>) {
     (
-        error.to_string(),
+        0,
         match error {
             FlashError::NoSuitableNvm {
                 start: _,
@@ -356,7 +356,7 @@ fn generate_flash_error_hints(
             } => {
                 if &TargetDescriptionSource::Generic == description_source {
                     return (
-                        error.to_string(),
+                        0,
                         vec![
                             "A generic chip was selected as the target. For flashing, it is necessary to specify a concrete chip.\n\
                             Use `--list-chips` to see all available chips.".to_owned()
